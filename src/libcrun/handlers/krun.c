@@ -443,14 +443,14 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
       if (UNLIKELY (ret < 0))
         error (EXIT_FAILURE, -ret, "could not set krun tee config file");
     }
-  else if (kconf->nitro)
-    {
-      ret = libkrun_configure_nitro (ctx_id, handle, &config_tree, &err);
-      if (UNLIKELY (ret < 0))
-        error (EXIT_FAILURE, -ret, "could not configure krun nitro enclave");
-    }
   else
     {
+      if (kconf->nitro)
+        {
+          ret = libkrun_configure_nitro (ctx_id, handle, &config_tree, &err);
+          if (UNLIKELY (ret < 0))
+            error (EXIT_FAILURE, -ret, "could not configure krun nitro enclave");
+        }
       krun_set_root = dlsym (handle, "krun_set_root");
 
       if (krun_set_root == NULL)
