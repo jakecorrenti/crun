@@ -150,8 +150,11 @@ libkrun_configure_kernel (uint32_t ctx_id, void *handle, yajl_val *config_tree, 
 #  endif
 
 static int
-libkrun_configure_nitro (uint32_t ctx_id, void *handle, yajl_val *config_tree, libcrun_error_t *err)
+libkrun_configure_nitro (uint32_t ctx_id, void *handle, yajl_val *config_tree,
+                         const char *pathname, char *const argv[],
+                         libcrun_error_t *err)
 {
+  int32_t (*krun_set_exec) (uint32_t ctx_id, const char *exec_path, const char *const argv[], const char *const envp[]);
   int32_t (*krun_nitro_set_image) (uint32_t ctx_id, const char *image_path, uint32_t image_type);
   int32_t (*krun_nitro_set_start_flags) (uint32_t ctx_id, uint64_t start_flags);
   const char *path_eif[] = { "eif_file", (const char *) 0 };
@@ -180,6 +183,16 @@ libkrun_configure_nitro (uint32_t ctx_id, void *handle, yajl_val *config_tree, l
   ret = krun_nitro_set_start_flags (ctx_id, 1);
   if (UNLIKELY (ret < 0))
     return crun_make_error (err, -ret, "could not configure a krun nitro start flags");
+
+  krun_set_exec = dlsym (handle, "krun_set_exec");
+  if (krun_set_exec == NULL)
+    return crun_make_error (err, 0, "could not find symbol in krun library");
+
+  const char *const envp[] = { 0 };
+
+  ret = krun_set_exec (ctx_id, pathname, (const char *const *) argv, envp);
+  if (UNLIKELY (ret < 0))
+    return crun_make_error (err, -ret, "could not configure a krun nitro EIF image");
 
   return 0;
 }
@@ -447,7 +460,7 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
     {
       if (kconf->nitro)
         {
-          ret = libkrun_configure_nitro (ctx_id, handle, &config_tree, &err);
+          ret = libkrun_configure_nitro (ctx_id, handle, &config_tree, pathname, argv, &err);
           if (UNLIKELY (ret < 0))
             error (EXIT_FAILURE, -ret, "could not configure krun nitro enclave");
         }
