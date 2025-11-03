@@ -26,11 +26,14 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <sys/param.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/sysmacros.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <sched.h>
 #include <ocispec/runtime_spec_schema_config_schema.h>
+#include <linux/vm_sockets.h>
 
 #ifdef HAVE_DLOPEN
 #  include <dlfcn.h>
@@ -61,6 +64,11 @@
 
 #define KRUN_FLAVOR_NITRO "aws-nitro"
 #define KRUN_FLAVOR_SEV "sev"
+
+#define VMADDR_CID_HYPERVISOR 0
+#define CID_TO_CONSOLE_PORT_OFFSET 10000
+
+#define BUFSIZE 512
 
 struct krun_config
 {
@@ -384,6 +392,54 @@ cleanup:
   return 0;
 }
 
+void *listen_enclave_output(void *opaque)
+{
+    socklen_t addr_sz = sizeof(struct sockaddr_vm);
+    struct sockaddr_vm addr;
+    int ret, sock_fd, cid;
+    struct timeval timeval;
+    char buf[BUFSIZE];
+
+    cid = (int) opaque;
+
+    sock_fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+    if (sock_fd < 0)
+        return (void *) -1;
+
+    bzero((char *) &addr, sizeof(struct sockaddr_vm));
+    addr.svm_family = AF_VSOCK;
+    addr.svm_cid = VMADDR_CID_HYPERVISOR;
+    addr.svm_port = cid + CID_TO_CONSOLE_PORT_OFFSET;
+
+    // Set vsock timeout limit to 5 seconds.
+    memset(&timeval, 0, sizeof(struct timeval));
+    timeval.tv_sec = 5;
+
+    ret = setsockopt(sock_fd, AF_VSOCK, SO_VM_SOCKETS_CONNECT_TIMEOUT,
+                        (void *) &timeval, sizeof(struct timeval));
+    if (ret < 0) {
+        close(sock_fd);
+        return (void *) -1;
+    }
+
+    ret = connect(sock_fd, (struct sockaddr *) &addr, addr_sz);
+    if (ret < 0) {
+        close(sock_fd);
+        return (void *) -1;
+    }
+
+    bzero(buf, BUFSIZE);
+    for (;;) {
+        ret = read(sock_fd, &buf, BUFSIZE);
+        if (ret < 0)
+            break;
+
+        buf[ret] = '\0';
+
+        printf("%s", buf);
+    }
+}
+
 static int
 libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname, char *const argv[])
 {
@@ -397,11 +453,12 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
   struct krun_config *kconf = (struct krun_config *) cookie;
   void *handle;
   uint32_t num_vcpus, ram_mib;
-  int32_t ctx_id, ret;
+  int32_t ctx_id, ret, cid;
   cpu_set_t set;
   libcrun_error_t err;
   bool configured = false;
   yajl_val config_tree = NULL;
+  pthread_t thread;
 
   ret = libkrun_read_vm_config (&config_tree, &err);
   if (UNLIKELY (ret < 0))
@@ -504,7 +561,22 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
 
   yajl_tree_free (config_tree);
 
-  ret = krun_start_enter (ctx_id);
+  cid = krun_start_enter (ctx_id);
+
+  ret = pthread_create(&thread, NULL, listen_enclave_output, (void *) cid);
+  if (ret < 0) {
+    perror("unable to create new listener thread");
+    exit(1);
+  }
+
+  ret = pthread_join(thread, NULL);
+  if (ret < 0) {
+    perror("unable to join listener thread");
+    exit(1);
+  }
+
+  sleep(1);
+
   return -ret;
 }
 
