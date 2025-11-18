@@ -265,7 +265,7 @@ libkrun_configure_vm (uint32_t ctx_id, void *handle, bool *configured, yajl_val 
 }
 
 static int
-libkrun_configure_flavor (void *cookie, yajl_val *config_tree, libcrun_error_t *err)
+libkrun_configure_flavor (void *cookie, yajl_val *config_tree, libcrun_container_t *container, libcrun_error_t *err)
 {
   int ret, sev_indicated = 0, nitro_indicated = 0;
   const char *path_flavor[] = { "flavor", (const char *) 0 };
@@ -276,6 +276,51 @@ libkrun_configure_flavor (void *cookie, yajl_val *config_tree, libcrun_error_t *
 
   close_handles[0] = NULL;
   close_handles[1] = NULL;
+
+  const char *krun_variant;
+  // check if the krun.variant annotation was set in the container spec
+  krun_variant = find_annotation (container, "krun.variant");
+  if (krun_variant != NULL)
+    {
+      if (strcmp (krun_variant, "nitro") == 0)
+        {
+          if (kconf->handle_nitro == NULL)
+            error (EXIT_FAILURE, 0, "the container requires libkrun-nitro but it's not available");
+
+          close_handles[0] = kconf->handle;
+          close_handles[1] = kconf->handle_sev;
+
+          kconf->handle = kconf->handle_nitro;
+          kconf->ctx_id = kconf->ctx_id_nitro;
+          kconf->nitro = true;
+        }
+      else if (strcmp (krun_variant, "sev") == 0)
+        {
+          if (kconf->handle_sev == NULL)
+            error (EXIT_FAILURE, 0, "the container requires libkrun-sev but it's not available");
+
+          close_handles[0] = kconf->handle;
+          close_handles[1] = kconf->handle_nitro;
+
+          kconf->handle = kconf->handle_sev;
+          kconf->ctx_id = kconf->ctx_id_sev;
+          kconf->sev = true;
+        }
+      else if (strcmp (krun_variant, "sev") == 0)
+        {
+          if (kconf->handle == NULL)
+            error (EXIT_FAILURE, 0, "the container requires libkrun but it's not available");
+
+          close_handles[0] = kconf->handle_sev;
+          close_handles[1] = kconf->handle_nitro;
+        }
+      else
+        {
+          error (EXIT_FAILURE, 0, "unknown krun variant specified (supported: nitro, sev)");
+        }
+
+      goto cleanup;
+    }
 
   // Read if the SEV flavor was indicated in the krun VM config.
   val_flavor = yajl_tree_get (*config_tree, path_flavor, yajl_t_string);
@@ -326,6 +371,7 @@ libkrun_configure_flavor (void *cookie, yajl_val *config_tree, libcrun_error_t *
       close_handles[1] = kconf->handle_nitro;
     }
 
+cleanup:
   // We no longer need the other two libkrun handles.
   for (int i = 0; i < 2; i++)
     {
@@ -363,7 +409,7 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
   if (UNLIKELY (ret < 0))
     error (EXIT_FAILURE, -ret, "libkrun VM config exists, but unable to parse");
 
-  ret = libkrun_configure_flavor (cookie, &config_tree, &err);
+  ret = libkrun_configure_flavor (cookie, &config_tree, container, &err);
   if (UNLIKELY (ret < 0))
     error (EXIT_FAILURE, -ret, "unable to configure libkrun flavor");
 
