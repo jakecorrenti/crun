@@ -460,6 +460,8 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
   yajl_val config_tree = NULL;
   pthread_t thread;
 
+  kconf->nitro = true;
+
   ret = libkrun_read_vm_config (&config_tree, &err);
   if (UNLIKELY (ret < 0))
     error (EXIT_FAILURE, -ret, "libkrun VM config exists, but unable to parse");
@@ -575,9 +577,7 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
     exit(1);
   }
 
-  sleep(1);
-
-  return -ret;
+  return 0;
 }
 
 /* libkrun_create_kvm_device: explicitly adds kvm device.  */
