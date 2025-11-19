@@ -230,11 +230,11 @@ libkrun_read_vm_config (yajl_val *config_tree, libcrun_error_t *err)
 }
 
 static int
-libkrun_configure_vm (uint32_t ctx_id, void *handle, bool *configured, yajl_val *config_tree, libcrun_error_t *err)
+libkrun_configure_vm (uint32_t ctx_id, void *handle, bool *configured, yajl_val *config_tree, libcrun_container_t *container, libcrun_error_t *err)
 {
   int32_t (*krun_set_vm_config) (uint32_t ctx_id, uint8_t num_vcpus, uint32_t ram_mib);
-  yajl_val cpus = NULL;
-  yajl_val ram_mib = NULL;
+  // yajl_val cpus = NULL;
+  // yajl_val ram_mib = NULL;
   const char *path_cpus[] = { "cpus", (const char *) 0 };
   const char *path_ram_mib[] = { "ram_mib", (const char *) 0 };
   int ret;
@@ -250,18 +250,56 @@ libkrun_configure_vm (uint32_t ctx_id, void *handle, bool *configured, yajl_val 
   if (UNLIKELY (ret))
     return ret;
 
-  cpus = yajl_tree_get (*config_tree, path_cpus, yajl_t_number);
-  ram_mib = yajl_tree_get (*config_tree, path_ram_mib, yajl_t_number);
+  const char *ram_mib_annotation;
+  const char *cpus_annotation;
+  int cpus = 1;
+  int memory_mib = 1024;
+
+  cpus_annotation = find_annotation(container, "krun.cpus");
+  if (cpus_annotation != NULL) {
+    char *endptr;
+    errno = 0;
+    cpus = strtol(cpus_annotation, &endptr, 10);
+    if (errno == ERANGE) {
+      perror("strtol");
+      exit(EXIT_FAILURE);
+    }
+
+    if (endptr == cpus_annotation) {
+      perror("No digits were found in cpus annotation\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+  ram_mib_annotation = find_annotation(container, "krun.memory_mib");
+  if (ram_mib_annotation != NULL) {
+    char *endptr;
+    errno = 0;
+    memory_mib = strtol(ram_mib_annotation, &endptr, 10);
+    if (errno == ERANGE) {
+      perror("strtol");
+      exit(EXIT_FAILURE);
+    }
+
+    if (endptr == ram_mib_annotation) {
+      perror("No digits were found in memory_mib annotation\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+  
+
+  // cpus = yajl_tree_get (*config_tree, path_cpus, yajl_t_number);
+  // ram_mib = yajl_tree_get (*config_tree, path_ram_mib, yajl_t_number);
   /* Both cpus and ram_mib must be present at the same time */
-  if (cpus == NULL || ram_mib == NULL || ! YAJL_IS_INTEGER (cpus) || ! YAJL_IS_INTEGER (ram_mib))
-    return 0;
+  // if (cpus == NULL || ram_mib == NULL || ! YAJL_IS_INTEGER (cpus) || ! YAJL_IS_INTEGER (ram_mib))
+  //   return 0;
 
   krun_set_vm_config = dlsym (handle, "krun_set_vm_config");
 
   if (krun_set_vm_config == NULL)
     return crun_make_error (err, 0, "could not find symbol in the krun library");
 
-  ret = krun_set_vm_config (ctx_id, YAJL_GET_INTEGER (cpus), YAJL_GET_INTEGER (ram_mib));
+  // FIXME: parse this information out of the annotations
+  ret = krun_set_vm_config (ctx_id, cpus, memory_mib);
   if (UNLIKELY (ret < 0))
     return crun_make_error (err, -ret, "could not set krun vm configuration");
 
@@ -518,7 +556,7 @@ libkrun_exec (void *cookie, libcrun_container_t *container, const char *pathname
         error (EXIT_FAILURE, -ret, "could not set krun root");
     }
 
-  ret = libkrun_configure_vm (ctx_id, handle, &configured, &config_tree, &err);
+  ret = libkrun_configure_vm (ctx_id, handle, &configured, &config_tree, container, &err);
   if (UNLIKELY (ret))
     {
       libcrun_error_t *tmp_err = &err;
